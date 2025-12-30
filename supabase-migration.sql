@@ -4,8 +4,12 @@
 -- 功能: 支持对话级复盘功能
 -- ========================================
 
--- 1. 创建对话级复盘表（如果不存在）
-CREATE TABLE IF NOT EXISTS review_conversations (
+-- 步骤1: 检查表是否存在，如果存在则删除旧表（谨慎操作！）
+-- 如果你有重要数据，请先备份
+DROP TABLE IF EXISTS review_conversations CASCADE;
+
+-- 步骤2: 创建新的对话级复盘表
+CREATE TABLE review_conversations (
   id TEXT PRIMARY KEY,
   conversation_id TEXT NOT NULL,
   messages JSONB NOT NULL DEFAULT '[]',
@@ -17,12 +21,12 @@ CREATE TABLE IF NOT EXISTS review_conversations (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 2. 为conversation_id创建索引
-CREATE INDEX IF NOT EXISTS idx_review_conversations_conversation_id
+-- 步骤3: 为conversation_id创建索引
+CREATE INDEX idx_review_conversations_conversation_id
 ON review_conversations(conversation_id);
 
--- 3. 为status创建索引
-CREATE INDEX IF NOT EXISTS idx_review_conversations_status
+-- 步骤4: 为status创建索引
+CREATE INDEX idx_review_conversations_status
 ON review_conversations(status);
 
 -- 4. 添加注释
