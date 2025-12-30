@@ -1,167 +1,90 @@
-import { supabase } from './supabase';
-import { uploadImage } from './cloudinary';
-import { Analysis, Review, Conversation, Message, ReviewConversation } from '@/types';
+import fs from 'fs/promises';
+import path from 'path';
+import { Analysis, Review, Conversation, Message, ReviewConversation, PredictionReview } from '@/types';
+
+const DATA_DIR = path.join(process.cwd(), 'data');
+const UPLOADS_DIR = path.join(process.cwd(), 'public', 'uploads');
+
+// 确保目录存在
+async function ensureDir(dir: string) {
+  try {
+    await fs.access(dir);
+  } catch {
+    await fs.mkdir(dir, { recursive: true });
+  }
+}
+
+// 读取JSON文件
+async function readJSON<T>(filename: string): Promise<T[]> {
+  const filePath = path.join(DATA_DIR, filename);
+  try {
+    const data = await fs.readFile(filePath, 'utf-8');
+    return JSON.parse(data);
+  } catch {
+    return [];
+  }
+}
+
+// 写入JSON文件
+async function writeJSON<T>(filename: string, data: T[]) {
+  await ensureDir(DATA_DIR);
+  const filePath = path.join(DATA_DIR, filename);
+  await fs.writeFile(filePath, JSON.stringify(data, null, 2), 'utf-8');
+}
 
 // ==================== 分析相关操作 ====================
 
 export async function saveAnalysis(analysis: Analysis) {
-  const { error } = await supabase
-    .from('analyses')
-    .insert([{
-      id: analysis.id,
-      stock_code: analysis.stockCode,
-      date: analysis.date,
-      image_url: analysis.imageUrl,
-      user_input: analysis.userInput,
-      ai_analysis: analysis.aiAnalysis,
-      status: analysis.status,
-      created_at: analysis.createdAt,
-    }]);
-
-  if (error) {
-    console.error('保存分析失败:', error);
-    throw new Error('保存分析失败');
-  }
+  const analyses = await readJSON<Analysis>('analyses.json');
+  analyses.push(analysis);
+  await writeJSON('analyses.json', analyses);
 }
 
 export async function getAnalyses(): Promise<Analysis[]> {
-  const { data, error } = await supabase
-    .from('analyses')
-    .select('*')
-    .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('获取分析列表失败:', error);
-    return [];
-  }
-
-  return (data || []).map(row => ({
-    id: row.id,
-    stockCode: row.stock_code,
-    date: row.date,
-    imageUrl: row.image_url,
-    userInput: row.user_input,
-    aiAnalysis: row.ai_analysis,
-    status: row.status,
-    createdAt: row.created_at,
-  }));
+  return await readJSON<Analysis>('analyses.json');
 }
 
 export async function getAnalysisById(id: string): Promise<Analysis | null> {
-  const { data, error } = await supabase
-    .from('analyses')
-    .select('*')
-    .eq('id', id)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return {
-    id: data.id,
-    stockCode: data.stock_code,
-    date: data.date,
-    imageUrl: data.image_url,
-    userInput: data.user_input,
-    aiAnalysis: data.ai_analysis,
-    status: data.status,
-    createdAt: data.created_at,
-  };
+  const analyses = await getAnalyses();
+  return analyses.find(a => a.id === id) || null;
 }
 
 export async function updateAnalysisStatus(id: string, status: 'pending_review' | 'reviewed') {
-  const { error } = await supabase
-    .from('analyses')
-    .update({ status })
-    .eq('id', id);
-
-  if (error) {
-    console.error('更新分析状态失败:', error);
+  const analyses = await getAnalyses();
+  const index = analyses.findIndex(a => a.id === id);
+  if (index !== -1) {
+    analyses[index].status = status;
+    await writeJSON('analyses.json', analyses);
   }
 }
 
 // ==================== 复盘相关操作 ====================
 
 export async function saveReview(review: Review) {
-  const { error } = await supabase
-    .from('reviews')
-    .insert([{
-      id: review.id,
-      analysis_id: review.analysisId,
-      actual_high: review.actualHigh,
-      actual_low: review.actualLow,
-      actual_close: review.actualClose,
-      accuracy: review.accuracy,
-      feedback: review.feedback,
-      reviewed_at: review.reviewedAt,
-    }]);
-
-  if (error) {
-    console.error('保存复盘失败:', error);
-    throw new Error('保存复盘失败');
-  }
-
-  // 更新对应分析的状态
+  const reviews = await readJSON<Review>('reviews.json');
+  reviews.push(review);
+  await writeJSON('reviews.json', reviews);
   await updateAnalysisStatus(review.analysisId, 'reviewed');
 }
 
 export async function getReviews(): Promise<Review[]> {
-  const { data, error } = await supabase
-    .from('reviews')
-    .select('*')
-    .order('reviewed_at', { ascending: false });
-
-  if (error) {
-    console.error('获取复盘列表失败:', error);
-    return [];
-  }
-
-  return (data || []).map(row => ({
-    id: row.id,
-    analysisId: row.analysis_id,
-    actualHigh: row.actual_high,
-    actualLow: row.actual_low,
-    actualClose: row.actual_close,
-    accuracy: row.accuracy,
-    feedback: row.feedback,
-    reviewedAt: row.reviewed_at,
-  }));
+  return await readJSON<Review>('reviews.json');
 }
 
 export async function getReviewByAnalysisId(analysisId: string): Promise<Review | null> {
-  const { data, error } = await supabase
-    .from('reviews')
-    .select('*')
-    .eq('analysis_id', analysisId)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return {
-    id: data.id,
-    analysisId: data.analysis_id,
-    actualHigh: data.actual_high,
-    actualLow: data.actual_low,
-    actualClose: data.actual_close,
-    accuracy: data.accuracy,
-    feedback: data.feedback,
-    reviewedAt: data.reviewed_at,
-  };
+  const reviews = await getReviews();
+  return reviews.find(r => r.analysisId === analysisId) || null;
 }
 
 // ==================== 图片上传 ====================
 
 export async function saveImage(buffer: Buffer, filename: string): Promise<string> {
-  try {
-    const imageUrl = await uploadImage(buffer, filename);
-    return imageUrl;
-  } catch (error) {
-    console.error('图片上传失败:', error);
-    throw new Error('图片上传失败');
-  }
+  await ensureDir(UPLOADS_DIR);
+  const timestamp = Date.now();
+  const newFilename = `${timestamp}_${filename}`;
+  const filepath = path.join(UPLOADS_DIR, newFilename);
+  await fs.writeFile(filepath, buffer);
+  return `/uploads/${newFilename}`;
 }
 
 // ==================== 历史分析上下文 ====================
@@ -170,16 +93,14 @@ export async function getHistoricalContext(): Promise<string> {
   const analyses = await getAnalyses();
   const reviews = await getReviews();
 
-  // 只取最近10条已复盘的分析
   const reviewedAnalyses = analyses
     .filter(a => a.status === 'reviewed')
-    .slice(0, 10);
+    .slice(-10);
 
   if (reviewedAnalyses.length === 0) {
     return '';
   }
 
-  // 统计准确率
   const accuracyRates = reviewedAnalyses
     .map(a => reviews.find(r => r.analysisId === a.id))
     .filter(r => r !== undefined)
@@ -213,96 +134,31 @@ export async function getHistoricalContext(): Promise<string> {
 // ==================== 对话相关操作 ====================
 
 export async function getConversations(): Promise<Conversation[]> {
-  const { data, error } = await supabase
-    .from('conversations')
-    .select('*')
-    .order('updated_at', { ascending: false });
-
-  if (error) {
-    console.error('获取对话列表失败:', error);
-    return [];
-  }
-
-  return (data || []).map(row => ({
-    id: row.id,
-    title: row.title,
-    messages: row.messages,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return await readJSON<Conversation>('conversations.json');
 }
 
 export async function getConversationById(id: string): Promise<Conversation | null> {
-  const { data, error } = await supabase
-    .from('conversations')
-    .select('*')
-    .eq('id', id)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return {
-    id: data.id,
-    title: data.title,
-    messages: data.messages,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
-  };
+  const conversations = await getConversations();
+  return conversations.find(c => c.id === id) || null;
 }
 
 export async function saveConversation(conversation: Conversation) {
-  const { data: existing } = await supabase
-    .from('conversations')
-    .select('id')
-    .eq('id', conversation.id)
-    .single();
+  const conversations = await getConversations();
+  const index = conversations.findIndex(c => c.id === conversation.id);
 
-  if (existing) {
-    // 更新现有对话
-    const { error } = await supabase
-      .from('conversations')
-      .update({
-        title: conversation.title,
-        messages: conversation.messages,
-        updated_at: conversation.updatedAt,
-      })
-      .eq('id', conversation.id);
-
-    if (error) {
-      console.error('更新对话失败:', error);
-      throw new Error('更新对话失败');
-    }
+  if (index !== -1) {
+    conversations[index] = conversation;
   } else {
-    // 创建新对话
-    const { error } = await supabase
-      .from('conversations')
-      .insert([{
-        id: conversation.id,
-        title: conversation.title,
-        messages: conversation.messages,
-        created_at: conversation.createdAt,
-        updated_at: conversation.updatedAt,
-      }]);
-
-    if (error) {
-      console.error('创建对话失败:', error);
-      throw new Error('创建对话失败');
-    }
+    conversations.push(conversation);
   }
+
+  await writeJSON('conversations.json', conversations);
 }
 
 export async function deleteConversation(id: string) {
-  const { error } = await supabase
-    .from('conversations')
-    .delete()
-    .eq('id', id);
-
-  if (error) {
-    console.error('删除对话失败:', error);
-    throw new Error('删除对话失败');
-  }
+  const conversations = await getConversations();
+  const filtered = conversations.filter(c => c.id !== id);
+  await writeJSON('conversations.json', filtered);
 }
 
 export async function addMessageToConversation(conversationId: string, message: Message) {
@@ -314,7 +170,6 @@ export async function addMessageToConversation(conversationId: string, message: 
   conversation.messages.push(message);
   conversation.updatedAt = new Date().toISOString();
 
-  // 如果是第一条用户消息，自动生成标题
   if (conversation.messages.length === 1 && message.role === 'user') {
     conversation.title = message.content.slice(0, 30) + (message.content.length > 30 ? '...' : '');
   }
@@ -325,123 +180,30 @@ export async function addMessageToConversation(conversationId: string, message: 
 // ==================== 复盘对话相关操作 ====================
 
 export async function getReviewConversations(): Promise<ReviewConversation[]> {
-  const { data, error } = await supabase
-    .from('review_conversations')
-    .select('*')
-    .order('updated_at', { ascending: false });
-
-  if (error) {
-    console.error('获取复盘对话列表失败:', error);
-    return [];
-  }
-
-  return (data || []).map(row => ({
-    id: row.id,
-    analysisId: row.analysis_id,
-    messages: row.messages,
-    actualData: row.actual_data,
-    accuracy: row.accuracy,
-    status: row.status,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-  }));
+  return await readJSON<ReviewConversation>('review-conversations.json');
 }
 
 export async function getReviewConversationById(id: string): Promise<ReviewConversation | null> {
-  const { data, error } = await supabase
-    .from('review_conversations')
-    .select('*')
-    .eq('id', id)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return {
-    id: data.id,
-    analysisId: data.analysis_id,
-    messages: data.messages,
-    actualData: data.actual_data,
-    accuracy: data.accuracy,
-    status: data.status,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
-  };
+  const conversations = await getReviewConversations();
+  return conversations.find(c => c.id === id) || null;
 }
 
-export async function getReviewConversationByAnalysisId(analysisId: string): Promise<ReviewConversation | null> {
-  const { data, error } = await supabase
-    .from('review_conversations')
-    .select('*')
-    .eq('analysis_id', analysisId)
-    .single();
-
-  if (error || !data) {
-    return null;
-  }
-
-  return {
-    id: data.id,
-    analysisId: data.analysis_id,
-    messages: data.messages,
-    actualData: data.actual_data,
-    accuracy: data.accuracy,
-    status: data.status,
-    createdAt: data.created_at,
-    updatedAt: data.updated_at,
-  };
+export async function getReviewConversationByConversationId(conversationId: string): Promise<ReviewConversation | null> {
+  const conversations = await getReviewConversations();
+  return conversations.find(c => c.conversationId === conversationId) || null;
 }
 
 export async function saveReviewConversation(conversation: ReviewConversation) {
-  const { data: existing } = await supabase
-    .from('review_conversations')
-    .select('id')
-    .eq('id', conversation.id)
-    .single();
+  const conversations = await getReviewConversations();
+  const index = conversations.findIndex(c => c.id === conversation.id);
 
-  if (existing) {
-    // 更新现有复盘对话
-    const { error } = await supabase
-      .from('review_conversations')
-      .update({
-        messages: conversation.messages,
-        actual_data: conversation.actualData,
-        accuracy: conversation.accuracy,
-        status: conversation.status,
-        updated_at: conversation.updatedAt,
-      })
-      .eq('id', conversation.id);
-
-    if (error) {
-      console.error('更新复盘对话失败:', error);
-      throw new Error('更新复盘对话失败');
-    }
+  if (index !== -1) {
+    conversations[index] = conversation;
   } else {
-    // 创建新复盘对话
-    const { error } = await supabase
-      .from('review_conversations')
-      .insert([{
-        id: conversation.id,
-        analysis_id: conversation.analysisId,
-        messages: conversation.messages,
-        actual_data: conversation.actualData,
-        accuracy: conversation.accuracy,
-        status: conversation.status,
-        created_at: conversation.createdAt,
-        updated_at: conversation.updatedAt,
-      }]);
-
-    if (error) {
-      console.error('创建复盘对话失败:', error);
-      throw new Error('创建复盘对话失败');
-    }
+    conversations.push(conversation);
   }
 
-  // 如果复盘已完成，更新原始分析的状态
-  if (conversation.status === 'completed') {
-    await updateAnalysisStatus(conversation.analysisId, 'reviewed');
-  }
+  await writeJSON('review-conversations.json', conversations);
 }
 
 export async function addMessageToReviewConversation(conversationId: string, message: Message) {
@@ -457,33 +219,18 @@ export async function addMessageToReviewConversation(conversationId: string, mes
 }
 
 export async function completeReviewConversation(
-  conversationId: string,
-  actualData: { actualHigh: number; actualLow: number; actualClose: number },
-  accuracy: number
+  reviewConversationId: string,
+  overallAccuracy: number,
+  qualityScore: number
 ) {
-  const conversation = await getReviewConversationById(conversationId);
+  const conversation = await getReviewConversationById(reviewConversationId);
   if (!conversation) {
     throw new Error('Review conversation not found');
   }
 
-  conversation.actualData = actualData;
-  conversation.accuracy = accuracy;
+  conversation.overallAccuracy = overallAccuracy;
+  conversation.qualityScore = qualityScore;
   conversation.status = 'completed';
 
   await saveReviewConversation(conversation);
-
-  // 同时创建传统的 Review 记录以保持兼容性
-  const lastMessage = conversation.messages[conversation.messages.length - 1];
-  const review: Review = {
-    id: `review_${Date.now()}`,
-    analysisId: conversation.analysisId,
-    actualHigh: actualData.actualHigh,
-    actualLow: actualData.actualLow,
-    actualClose: actualData.actualClose,
-    accuracy,
-    feedback: lastMessage?.content || '',
-    reviewedAt: new Date().toISOString(),
-  };
-
-  await saveReview(review);
 }

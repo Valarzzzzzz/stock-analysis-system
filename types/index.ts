@@ -34,17 +34,27 @@ export interface Review {
 // 复盘对话类型
 export interface ReviewConversation {
   id: string;
-  analysisId: string; // 关联的原始分析ID
+  conversationId: string; // 关联的原始对话ID（改：从analysisId变为conversationId）
   messages: Message[]; // 复盘讨论的消息列表
+  predictions: PredictionReview[]; // 对话中所有预测的复盘结果
+  overallAccuracy?: number; // 平均准确率
+  qualityScore?: number; // 整体对话质量评分 (0-100)
+  status: 'ongoing' | 'completed'; // 进行中 / 已完成
+  createdAt: string;
+  updatedAt: string;
+}
+
+// 单个预测的复盘结果
+export interface PredictionReview {
+  messageId: string; // 对应的消息ID
+  imageUrl?: string; // 预测时的图片
+  prediction: AIAnalysis; // 原始预测
   actualData?: {
     actualHigh: number;
     actualLow: number;
     actualClose: number;
   };
-  accuracy?: number;
-  status: 'ongoing' | 'completed'; // 进行中 / 已完成
-  createdAt: string;
-  updatedAt: string;
+  accuracy?: number; // 该预测的准确率
 }
 
 // 对话相关类型

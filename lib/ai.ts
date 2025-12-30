@@ -13,8 +13,8 @@ interface ModelConfig {
 const MODEL_CONFIGS: Record<AIModel, ModelConfig> = {
   qwen: {
     apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    modelName: 'qwen-vl-plus',
-    supportsVision: true,
+    modelName: 'qwen-plus', // 改用qwen-plus进行对话推理
+    supportsVision: false, // qwen-plus不支持图片
     apiKeyEnv: 'QWEN_API_KEY',
   },
   deepseek: {
@@ -24,6 +24,87 @@ const MODEL_CONFIGS: Record<AIModel, ModelConfig> = {
     apiKeyEnv: 'DEEPSEEK_API_KEY',
   },
 };
+
+// 图片识别专用配置（统一使用qwen-vl-plus）
+const VISION_MODEL_CONFIG: ModelConfig = {
+  apiUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+  modelName: 'qwen-vl-plus',
+  supportsVision: true,
+  apiKeyEnv: 'QWEN_API_KEY',
+};
+
+// 使用qwen-vl-plus识别图片内容
+async function recognizeImage(imageBase64: string): Promise<string> {
+  const visionApiKey = process.env[VISION_MODEL_CONFIG.apiKeyEnv];
+
+  if (!visionApiKey) {
+    throw new Error(`${VISION_MODEL_CONFIG.apiKeyEnv} 未配置`);
+  }
+
+  const prompt = `请详细分析这张股市K线图，提取以下信息：
+
+1. **基本信息**：
+   - 股票代码/名称（如果能识别）
+   - 时间周期（日线、周线、小时线等）
+   - 当前价格
+
+2. **价格数据**：
+   - 最新收盘价
+   - 最高价、最低价
+   - 重要的支撑位和阻力位
+
+3. **技术形态**：
+   - K线形态（如头肩顶、双底、三角形等）
+   - 趋势方向（上涨、下跌、横盘）
+   - 成交量变化
+
+4. **技术指标**（如果图中有显示）：
+   - 均线位置
+   - MACD、RSI等指标状态
+
+请用清晰、结构化的方式描述，便于后续分析使用。`;
+
+  try {
+    const response = await fetch(VISION_MODEL_CONFIG.apiUrl, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${visionApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: VISION_MODEL_CONFIG.modelName,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'image_url',
+                image_url: { url: `data:image/png;base64,${imageBase64}` }
+              },
+              {
+                type: 'text',
+                text: prompt
+              }
+            ]
+          }
+        ],
+        temperature: 0.3, // 降低温度以提高准确性
+        max_tokens: 1500,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`图片识别API错误: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.choices[0].message.content;
+  } catch (error) {
+    console.error('图片识别失败:', error);
+    throw new Error('图片识别失败，请稍后重试');
+  }
+}
 
 // 对话式聊天（支持多轮对话和多模型）
 export async function chat(
@@ -38,9 +119,10 @@ export async function chat(
     throw new Error(`${config.apiKeyEnv} 未配置`);
   }
 
-  // 如果有图片但模型不支持,返回错误
-  if (imageBase64 && !config.supportsVision) {
-    throw new Error(`${model} 模型不支持图片输入，请使用通义千问模型或仅发送文字`);
+  // 如果有图片，先使用qwen-vl-plus识别图片内容
+  let imageDescription = '';
+  if (imageBase64) {
+    imageDescription = await recognizeImage(imageBase64);
   }
 
   // 获取历史复盘上下文
@@ -76,35 +158,18 @@ ${historicalContext}
     // 添加历史消息
     for (const msg of messages) {
       if (msg.role === 'user') {
-        // 如果支持多模态且有图片
-        if (config.supportsVision && msg.imageUrl) {
-          const content: any[] = [];
+        // 所有消息都转为纯文本（因为对话模型不支持图片）
+        let userContent = msg.content;
 
-          // 添加图片
-          if (msg.imageUrl.startsWith('data:image')) {
-            content.push({
-              type: 'image_url',
-              image_url: { url: msg.imageUrl }
-            });
-          }
-
-          // 添加文字
-          content.push({
-            type: 'text',
-            text: msg.content
-          });
-
-          apiMessages.push({
-            role: 'user',
-            content
-          });
-        } else {
-          // 纯文本消息
-          apiMessages.push({
-            role: 'user',
-            content: msg.content
-          });
+        // 如果历史消息有图片URL，添加提示
+        if (msg.imageUrl) {
+          userContent = `[用户上传了图片]\n${userContent}`;
         }
+
+        apiMessages.push({
+          role: 'user',
+          content: userContent
+        });
       } else {
         apiMessages.push({
           role: 'assistant',
@@ -113,20 +178,11 @@ ${historicalContext}
       }
     }
 
-    // 如果当前有新图片，添加到最后一条用户消息
-    if (imageBase64 && config.supportsVision && apiMessages.length > 0) {
+    // 如果当前有新图片，将识别结果添加到最后一条用户消息
+    if (imageDescription && apiMessages.length > 0) {
       const lastMsg = apiMessages[apiMessages.length - 1];
       if (lastMsg.role === 'user') {
-        const content = Array.isArray(lastMsg.content)
-          ? lastMsg.content
-          : [{ type: 'text', text: lastMsg.content }];
-
-        content.unshift({
-          type: 'image_url',
-          image_url: { url: `data:image/png;base64,${imageBase64}` }
-        });
-
-        lastMsg.content = content;
+        lastMsg.content = `[图片识别结果]\n${imageDescription}\n\n[用户问题]\n${lastMsg.content}`;
       }
     }
 
@@ -197,16 +253,30 @@ export async function analyzeStock(
   return analysis;
 }
 
+// 兼容函数：callDeepSeek（现在使用混合策略）
+export async function callDeepSeek(
+  conversationHistory: Array<{ role: string; content: string }>,
+  systemPrompt?: string
+): Promise<string> {
+  const messages: Message[] = conversationHistory.map((msg, index) => ({
+    id: `msg_${index}`,
+    role: msg.role as 'user' | 'assistant',
+    content: msg.content,
+    timestamp: new Date().toISOString(),
+  }));
+
+  return chat(messages, undefined, 'deepseek');
+}
+
 // 分析复盘图片，提取实际价格数据（使用 Qwen VL Plus）
 export async function analyzeReviewImage(
   imageBase64: string,
   originalPrediction: AIAnalysis
 ): Promise<{ actualHigh: number; actualLow: number; actualClose: number; analysis: string }> {
-  const config = MODEL_CONFIGS.qwen;
-  const apiKey = process.env[config.apiKeyEnv];
+  const apiKey = process.env[VISION_MODEL_CONFIG.apiKeyEnv];
 
   if (!apiKey) {
-    throw new Error(`${config.apiKeyEnv} 未配置`);
+    throw new Error(`${VISION_MODEL_CONFIG.apiKeyEnv} 未配置`);
   }
 
   const systemPrompt = `你是一位专业的股市K线图数据提取专家。你的任务是：
@@ -240,14 +310,14 @@ export async function analyzeReviewImage(
 请从图中提取实际的最高价、最低价和收盘价。`;
 
   try {
-    const response = await fetch(config.apiUrl, {
+    const response = await fetch(VISION_MODEL_CONFIG.apiUrl, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: config.modelName,
+        model: VISION_MODEL_CONFIG.modelName,
         messages: [
           {
             role: 'system',

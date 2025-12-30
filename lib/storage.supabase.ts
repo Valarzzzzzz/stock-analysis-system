@@ -337,10 +337,11 @@ export async function getReviewConversations(): Promise<ReviewConversation[]> {
 
   return (data || []).map(row => ({
     id: row.id,
-    analysisId: row.analysis_id,
+    conversationId: row.conversation_id, // 改：从 analysis_id 变为 conversation_id
     messages: row.messages,
-    actualData: row.actual_data,
-    accuracy: row.accuracy,
+    predictions: row.predictions || [],
+    overallAccuracy: row.overall_accuracy,
+    qualityScore: row.quality_score,
     status: row.status,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -360,21 +361,22 @@ export async function getReviewConversationById(id: string): Promise<ReviewConve
 
   return {
     id: data.id,
-    analysisId: data.analysis_id,
+    conversationId: data.conversation_id,
     messages: data.messages,
-    actualData: data.actual_data,
-    accuracy: data.accuracy,
+    predictions: data.predictions || [],
+    overallAccuracy: data.overall_accuracy,
+    qualityScore: data.quality_score,
     status: data.status,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
   };
 }
 
-export async function getReviewConversationByAnalysisId(analysisId: string): Promise<ReviewConversation | null> {
+export async function getReviewConversationByConversationId(conversationId: string): Promise<ReviewConversation | null> {
   const { data, error } = await supabase
     .from('review_conversations')
     .select('*')
-    .eq('analysis_id', analysisId)
+    .eq('conversation_id', conversationId)
     .single();
 
   if (error || !data) {
@@ -383,10 +385,11 @@ export async function getReviewConversationByAnalysisId(analysisId: string): Pro
 
   return {
     id: data.id,
-    analysisId: data.analysis_id,
+    conversationId: data.conversation_id,
     messages: data.messages,
-    actualData: data.actual_data,
-    accuracy: data.accuracy,
+    predictions: data.predictions || [],
+    overallAccuracy: data.overall_accuracy,
+    qualityScore: data.quality_score,
     status: data.status,
     createdAt: data.created_at,
     updatedAt: data.updated_at,
@@ -406,8 +409,9 @@ export async function saveReviewConversation(conversation: ReviewConversation) {
       .from('review_conversations')
       .update({
         messages: conversation.messages,
-        actual_data: conversation.actualData,
-        accuracy: conversation.accuracy,
+        predictions: conversation.predictions,
+        overall_accuracy: conversation.overallAccuracy,
+        quality_score: conversation.qualityScore,
         status: conversation.status,
         updated_at: conversation.updatedAt,
       })
@@ -423,10 +427,11 @@ export async function saveReviewConversation(conversation: ReviewConversation) {
       .from('review_conversations')
       .insert([{
         id: conversation.id,
-        analysis_id: conversation.analysisId,
+        conversation_id: conversation.conversationId,
         messages: conversation.messages,
-        actual_data: conversation.actualData,
-        accuracy: conversation.accuracy,
+        predictions: conversation.predictions,
+        overall_accuracy: conversation.overallAccuracy,
+        quality_score: conversation.qualityScore,
         status: conversation.status,
         created_at: conversation.createdAt,
         updated_at: conversation.updatedAt,
@@ -436,11 +441,6 @@ export async function saveReviewConversation(conversation: ReviewConversation) {
       console.error('创建复盘对话失败:', error);
       throw new Error('创建复盘对话失败');
     }
-  }
-
-  // 如果复盘已完成，更新原始分析的状态
-  if (conversation.status === 'completed') {
-    await updateAnalysisStatus(conversation.analysisId, 'reviewed');
   }
 }
 
@@ -457,33 +457,18 @@ export async function addMessageToReviewConversation(conversationId: string, mes
 }
 
 export async function completeReviewConversation(
-  conversationId: string,
-  actualData: { actualHigh: number; actualLow: number; actualClose: number },
-  accuracy: number
+  reviewConversationId: string,
+  overallAccuracy: number,
+  qualityScore: number
 ) {
-  const conversation = await getReviewConversationById(conversationId);
+  const conversation = await getReviewConversationById(reviewConversationId);
   if (!conversation) {
     throw new Error('Review conversation not found');
   }
 
-  conversation.actualData = actualData;
-  conversation.accuracy = accuracy;
+  conversation.overallAccuracy = overallAccuracy;
+  conversation.qualityScore = qualityScore;
   conversation.status = 'completed';
 
   await saveReviewConversation(conversation);
-
-  // 同时创建传统的 Review 记录以保持兼容性
-  const lastMessage = conversation.messages[conversation.messages.length - 1];
-  const review: Review = {
-    id: `review_${Date.now()}`,
-    analysisId: conversation.analysisId,
-    actualHigh: actualData.actualHigh,
-    actualLow: actualData.actualLow,
-    actualClose: actualData.actualClose,
-    accuracy,
-    feedback: lastMessage?.content || '',
-    reviewedAt: new Date().toISOString(),
-  };
-
-  await saveReview(review);
 }

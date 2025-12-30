@@ -2,10 +2,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { Conversation, Message } from '@/types';
 import { format } from 'date-fns';
 
 export default function Home() {
+  const router = useRouter();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -217,6 +219,18 @@ export default function Home() {
     }
   };
 
+  const handleLogout = async () => {
+    if (!confirm('确定要退出登录吗？')) return;
+
+    try {
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+      router.refresh();
+    } catch (error) {
+      console.error('退出登录失败:', error);
+    }
+  };
+
   const currentConversation = conversations.find(c => c.id === currentConversationId);
 
   return (
@@ -244,8 +258,10 @@ export default function Home() {
           ))}
         </div>
 
-        <div className="p-4 border-t border-gray-200">
-          <Link href="/history" className="block text-center text-sm text-gray-600 hover:text-black transition">📊 复盘记录</Link>
+        <div className="p-4 border-t border-gray-200 space-y-2">
+          <Link href="/review" className="block text-center text-sm text-gray-600 hover:text-black transition">💬 复盘中心</Link>
+          <Link href="/history" className="block text-center text-sm text-gray-600 hover:text-black transition">📊 历史分析</Link>
+          <button onClick={handleLogout} className="w-full text-center text-sm text-gray-600 hover:text-red-600 transition">🚪 退出登录</button>
         </div>
       </div>
 
@@ -327,7 +343,7 @@ export default function Home() {
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                 }`}
               >
-                🧠 DeepSeek {!image && '(纯文本)'}
+                🧠 DeepSeek
               </button>
             </div>
 
